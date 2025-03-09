@@ -21,18 +21,36 @@ TOKEN_PAIRS = [
 ]
 
 # -------------------------
-# Binance API Function
+# Binance API Function (UPDATED)
 # -------------------------
 def get_binance_prices():
     try:
-        response = requests.get("https://api.binance.com/api/v3/ticker/price")
+        url = "https://api.binance.com/api/v3/ticker/price"
+        response = requests.get(url)
+
+        # Check HTTP status
+        if response.status_code != 200:
+            st.error(f"Binance API error: {response.status_code}")
+            return {}
+
         data = response.json()
+
+        # Validate data type
+        if not isinstance(data, list):
+            st.error("Unexpected Binance data format.")
+            return {}
+
         prices = {}
         for item in data:
-            symbol = item["symbol"]
-            price = float(item["price"])
-            prices[symbol] = price
+            if isinstance(item, dict) and "symbol" in item and "price" in item:
+                symbol = item["symbol"]
+                price = float(item["price"])
+                prices[symbol] = price
+            else:
+                st.warning(f"Unexpected data item from Binance: {item}")
+
         return prices
+
     except Exception as e:
         st.error(f"Error fetching Binance prices: {e}")
         return {}
@@ -44,13 +62,25 @@ def get_raydium_prices():
     try:
         url = "https://api.raydium.io/v2/sdk/liquidity/mainnet.json"
         response = requests.get(url)
+
+        if response.status_code != 200:
+            st.error(f"Raydium API error: {response.status_code}")
+            return {}
+
         data = response.json()
+
+        if not isinstance(data, dict) or 'official' not in data:
+            st.error("Unexpected Raydium data format.")
+            return {}
+
         prices = {}
         for pool in data['official']:
             pair = f"{pool['base']['symbol']}/{pool['quote']['symbol']}"
             price = float(pool['price']) if 'price' in pool else None
             prices[pair.upper()] = price
+
         return prices
+
     except Exception as e:
         st.error(f"Error fetching Raydium prices: {e}")
         return {}
@@ -83,7 +113,7 @@ def find_arbitrage(binance_prices, raydium_prices, token_pairs):
     return opportunities
 
 # -------------------------
-# Streamlit UI
+# Streamlit App UI
 # -------------------------
 st.title("Solana Arbitrage Scanner")
 st.markdown("Scanning for arbitrage opportunities between **Binance** and **Raydium.io**")
@@ -105,11 +135,11 @@ while True:
             if opportunities:
                 st.success(f"Found {len(opportunities)} arbitrage opportunities!")
                 for opp in opportunities:
-                    st.write(f"""
+                    st.markdown(f"""
                         **Pair:** {opp['pair']}
-                        - Binance Price: {opp['binance_price']}
-                        - Raydium Price: {opp['raydium_price']}
-                        - Difference: {opp['diff_percent']}%
+                        - Binance Price: `{opp['binance_price']}`
+                        - Raydium Price: `{opp['raydium_price']}`
+                        - Difference: `{opp['diff_percent']}%`
                     """)
             else:
                 st.warning("No arbitrage opportunities found at this time.")
