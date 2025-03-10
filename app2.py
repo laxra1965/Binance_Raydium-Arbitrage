@@ -2,150 +2,131 @@ import streamlit as st
 import requests
 import time
 
-# -------------------------
-# Hardcoded Solana Token Pairs
-# -------------------------
-TOKEN_PAIRS = [
-    "YODA/SOL", "PIPSOL/SOL", "SWEEPY/SOL", "$ROGERS/SOL", "TRA/SOL",
-    "ORANGELAD/SOL", "PWEASE/SOL", "KAIREN/SOL", "EWON/SOL", "COCORO/SOL",
-    "EDELON/SOL", "JAIL MILEI/SOL", "CASH/SOL", "GOOSE/SOL", "LEOVANCE/SOL",
-    "BTCR/SOL", "JDWOMEN/SOL", "TRUMPLEY/SOL", "COCORO/SOL", "PABLO/SOL",
-    "DB/SOL", "STORE/SOL", "PI/SOL", "GROKCOIN/SOL", "BLOOP/SOL",
-    "JESUS/SOL", "MCUBAN/SOL", "LEONAWDO/SOL", "PIP/SOL", "FATCZ/SOL",
-    "GROKCOIN/SOL", "COCORO/SOL", "DORIME/SOL", "PVE/SOL", "PUMPPAY/SOL",
-    "DIAMONDS/SOL", "BARRON/SOL", "F/SOL", "DOWE/SOL", "WATER/SOL",
-    "JEFF/SOL", "BARRON/SOL", "FARTCLUB/SOL", "ARC/SOL", "YE/SOL",
-    "SPX/SOL", "GROKCOIN/SOL", "WINE/SOL", "WPEPE/SOL", "COCORO/SOL",
-    "DSX/SOL", "BARRON/SOL", "FRANKIE/SOL", "ELIGIUS/SOL", "TITCOIN/SOL",
-    "TELEGRAM/SOL", "YZY/SOL", "WILDNOUT/SOL", "1SOL/SOL", "SPACEX/SOL"
-]
+# ========== CONFIG ==========
+TOKEN_PAIRS = ["SOL/USDT", "RAY/USDT", "SRM/USDT"]
+BINANCE_API_URL = "https://api.binance.com/api/v3/ticker/price"
+RAYDIUM_API_URL = "https://api.raydium.io/pairs"
 
-# -------------------------
-# Binance API Function (UPDATED)
-# -------------------------
+# ========== FUNCTIONS ==========
+
 def get_binance_prices():
+    prices = {}
     try:
-        url = "https://api.binance.com/api/v3/ticker/price"
-        response = requests.get(url)
-
-        # Check HTTP status
-        if response.status_code != 200:
-            st.error(f"Binance API error: {response.status_code}")
-            return {}
-
+        response = requests.get(BINANCE_API_URL)
         data = response.json()
-
-        # Validate data type
-        if not isinstance(data, list):
-            st.error("Unexpected Binance data format.")
-            return {}
-
-        prices = {}
         for item in data:
-            if isinstance(item, dict) and "symbol" in item and "price" in item:
-                symbol = item["symbol"]
-                price = float(item["price"])
-                prices[symbol] = price
-            else:
-                st.warning(f"Unexpected data item from Binance: {item}")
-
-        return prices
-
+            symbol = item['symbol']
+            for pair in TOKEN_PAIRS:
+                token, base = pair.split('/')
+                binance_symbol = token + base
+                if symbol == binance_symbol:
+                    prices[pair] = float(item['price'])
     except Exception as e:
         st.error(f"Error fetching Binance prices: {e}")
-        return {}
+    return prices
 
-# -------------------------
-# Raydium API Function
-# -------------------------
 def get_raydium_prices():
+    prices = {}
     try:
-        url = "https://api.raydium.io/v2/sdk/liquidity/mainnet.json"
-        response = requests.get(url)
-
-        if response.status_code != 200:
-            st.error(f"Raydium API error: {response.status_code}")
-            return {}
-
+        response = requests.get(RAYDIUM_API_URL)
         data = response.json()
-
-        if not isinstance(data, dict) or 'official' not in data:
-            st.error("Unexpected Raydium data format.")
-            return {}
-
-        prices = {}
-        for pool in data['official']:
-            pair = f"{pool['base']['symbol']}/{pool['quote']['symbol']}"
-            price = float(pool['price']) if 'price' in pool else None
-            prices[pair.upper()] = price
-
-        return prices
-
+        for pair in data:
+            market = pair.get("name")  # e.g., SOL/USDC
+            if market:
+                market_pair = market.replace("USDC", "USDT")
+                if market_pair in TOKEN_PAIRS:
+                    raydium_price = float(pair.get("price", 0))
+                    prices[market_pair] = raydium_price
     except Exception as e:
         st.error(f"Error fetching Raydium prices: {e}")
-        return {}
+    return prices
 
-# -------------------------
-# Arbitrage Detection Function
-# -------------------------
-def find_arbitrage(binance_prices, raydium_prices, token_pairs):
+def find_arbitrage(binance_prices, raydium_prices):
     opportunities = []
-
-    for pair in token_pairs:
-        token, quote = pair.split("/")
-        binance_symbol = f"{token}{quote}".replace("/", "").upper()
-
-        binance_price = binance_prices.get(binance_symbol)
-        raydium_price = raydium_prices.get(pair.upper())
-
+    for pair in TOKEN_PAIRS:
+        binance_price = binance_prices.get(pair)
+        raydium_price = raydium_prices.get(pair)
         if binance_price and raydium_price:
-            diff = raydium_price - binance_price
-            diff_percent = (diff / binance_price) * 100
+            profit_to_raydium = (raydium_price - binance_price) / binance_price * 100
+            profit_to_binance = (binance_price - raydium_price) / raydium_price * 100
 
-            if abs(diff_percent) > 1:  # Arbitrage threshold %
+            if profit_to_raydium > 0.5:
                 opportunities.append({
                     "pair": pair,
+                    "buy_from": "Binance",
+                    "sell_to": "Raydium",
                     "binance_price": binance_price,
                     "raydium_price": raydium_price,
-                    "diff_percent": round(diff_percent, 2)
+                    "profit_pct": round(profit_to_raydium, 2)
                 })
-
+            elif profit_to_binance > 0.5:
+                opportunities.append({
+                    "pair": pair,
+                    "buy_from": "Raydium",
+                    "sell_to": "Binance",
+                    "binance_price": binance_price,
+                    "raydium_price": raydium_price,
+                    "profit_pct": round(profit_to_binance, 2)
+                })
     return opportunities
 
-# -------------------------
-# Streamlit App UI
-# -------------------------
-st.title("Solana Arbitrage Scanner")
-st.markdown("Scanning for arbitrage opportunities between **Binance** and **Raydium.io**")
+def play_audio_alert():
+    # Embeds an audio player (HTML5) into Streamlit
+    audio_file = open("alert.mp3", "rb")
+    audio_bytes = audio_file.read()
+    st.audio(audio_bytes, format='audio/mp3')
 
-refresh_rate = st.slider("Refresh rate (seconds)", 10, 300, 60)
+def display_popup(message):
+    # Streamlit markdown alert
+    st.markdown(
+        f"""
+        <div style="padding: 10px; border-radius: 5px; background-color: #FF4136; color: white;">
+            <strong>{message}</strong>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
-placeholder = st.empty()
+# ========== STREAMLIT APP ==========
+
+st.title("Binance ↔ Raydium Arbitrage Scanner with Alerts")
+st.write("Scanning Solana tokens for arbitrage opportunities...")
+
+update_interval = st.slider("Refresh interval (seconds)", 5, 60, 10)
+
+# Placeholder for real-time updates
+opportunity_placeholder = st.empty()
 
 while True:
-    with placeholder.container():
-        st.write("Fetching prices...")
-
+    with st.spinner("Fetching latest prices..."):
         binance_prices = get_binance_prices()
         raydium_prices = get_raydium_prices()
 
-        if binance_prices and raydium_prices:
-            opportunities = find_arbitrage(binance_prices, raydium_prices, TOKEN_PAIRS)
+        st.subheader("Current Prices")
+        st.json({
+            "Binance": binance_prices,
+            "Raydium": raydium_prices
+        })
 
-            if opportunities:
-                st.success(f"Found {len(opportunities)} arbitrage opportunities!")
-                for opp in opportunities:
-                    st.markdown(f"""
-                        **Pair:** {opp['pair']}
-                        - Binance Price: `{opp['binance_price']}`
-                        - Raydium Price: `{opp['raydium_price']}`
-                        - Difference: `{opp['diff_percent']}%`
-                    """)
-            else:
-                st.warning("No arbitrage opportunities found at this time.")
+        opportunities = find_arbitrage(binance_prices, raydium_prices)
 
+        if opportunities:
+            opportunity_placeholder.success("🚨 Arbitrage Opportunities Found!")
+            for opp in opportunities:
+                with st.container():
+                    st.write(f"🔔 **{opp['pair']}**")
+                    st.write(f"Buy from: **{opp['buy_from']}** at {opp['binance_price'] if opp['buy_from']=='Binance' else opp['raydium_price']}")
+                    st.write(f"Sell to: **{opp['sell_to']}** at {opp['raydium_price'] if opp['sell_to']=='Raydium' else opp['binance_price']}")
+                    st.write(f"Potential profit: **{opp['profit_pct']}%**")
+                    st.markdown("---")
+
+            # Play alert sound
+            play_audio_alert()
+
+            # Show popup alert
+            display_popup("🚨 Arbitrage opportunity detected!")
         else:
-            st.error("Error fetching prices. Try again later.")
+            opportunity_placeholder.warning("No arbitrage opportunities right now.")
 
-    time.sleep(refresh_rate)
-    st.experimental_rerun()  # Triggers refresh in Streamlit Cloud
+    time.sleep(update_interval)
+    st.experimental_rerun()
